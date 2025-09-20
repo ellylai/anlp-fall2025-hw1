@@ -47,7 +47,10 @@ class LayerNorm(torch.nn.Module):
         mean = x.mean(dim=1, keepdim=True)
         var = x.var(dim=1, keepdim=True)
         return (x - mean) / torch.sqrt(var + self.eps)
-        raise NotImplementedError
+
+        # layernorm = torch.LayerNorm(normalized_shape=1, bias=True)
+        # return layernorm(x)
+        # raise NotImplementedError
 
     def forward(self, x):
         """
@@ -107,16 +110,21 @@ class Attention(nn.Module):
         attention matrix before applying it to the value tensor.
         """
         # (bs, n_local_heads, seqlen, head_dim) x (bs, n_local_heads, head_dim, seqlen) = (bs, n_local_heads, seqlen, seqlen)
-        numerator = torch.matmul(query, key.transpose(-2, -1)) # matmul
-        denominator = math.sqrt(self.head_dim) # scale
-        attention = F.softmax(
-            numerator / denominator, dim=-1 
-        )  # softmax over last dimension
-        attention = self.attn_dropout(attention) # dropout
+        numerator = torch.matmul(query, key.transpose(-2, -1))  # matmul
+        denominator = math.sqrt(self.head_dim)  # scale
+        scores = numerator / denominator
+
+        # saw this in https://github.com/karpathy/llama2.c/blob/350e04fe35433e6d2941dce5a1f53308f87058eb/model.py#L56
+        # seqlen = query.shape[2]
+        # scores = scores + self.mask[:, :, :seqlen, :seqlen]
+
+        # softmax over last dimension
+        attention = F.softmax(scores, dim=-1).type_as(query)
+        attention = self.attn_dropout(attention)  # dropout
         # (bs, n_local_heads, seqlen, seqlen) x (bs, n_local_heads, seqlen, head_dim) = (bs, n_local_heads, seqlen, head_dim)
-        final_attention = torch.matmul(attention, value) # matmul
-        return final_attention # output
-        raise NotImplementedError
+        final_attention = torch.matmul(attention, value)  # matmul
+        return final_attention  # output
+        # raise NotImplementedError
 
     def forward(self, x: torch.Tensor):
         """
@@ -220,21 +228,20 @@ class LlamaLayer(nn.Module):
         """
         # todo
         # 1. layer normalization on input
-        layer_normalization = self.attention_norm
-        x_norm1 = layer_normalization._norm(x)
+        x_norm1 = self.attention_norm(x)
         # 2. self-attention on layer-normalized input
-        attention_out = self.attention(x_norm1)
+        attention_out = self.attention.forward(x_norm1)
         # 3. residual connection: add the input to the output of the self-attention
         residual1 = x + attention_out
         # # 4. layer norm on output of self attention
         x_norm2 = self.ffn_norm(residual1)
         # feed forward network
-        feed_forward_attention = self.feed_forward(x_norm2)
+        feed_forward_attention = self.feed_forward.forward(x_norm2)
         # residual connection
         output = residual1 + feed_forward_attention
 
         return output
-        raise NotImplementedError
+        # raise NotImplementedError
 
 
 class Llama(LlamaPreTrainedModel):
@@ -324,11 +331,11 @@ class Llama(LlamaPreTrainedModel):
             logits, _ = self(idx_cond)
             logits = logits[:, -1, :]  # crop to just the final time step
             # todo
-            raise NotImplementedError
+            # raise NotImplementedError
 
             if temperature == 0.0:
-                # select the single most likely index
-                idx_next = None
+                # select the single most likely index (top k=1 most likely)
+                idx_next = torch.topk(logits, k=1, dim=-1).indices
             else:
                 """
                 Perform temperature sampling with epsilon sampling:
@@ -337,8 +344,22 @@ class Llama(LlamaPreTrainedModel):
                 3) Apply the mask to keep only tokens with probability >= epsilon.
                 4) Renormalize the filtered probabilities so they sum to 1.
                 5) Sample from this filtered probability distribution.
+
+                Note: referenced https://github.com/karpathy/llama2.c/blob/350e04fe35433e6d2941dce5a1f53308f87058eb/model.py#L56
                 """
-                idx_next = None
+                # 1) Scale the logits with the temperature followed by normalization using Softmax.
+                logits = logits / temperature
+                probs = F.softmax(logits, dim=-1)
+                # 2) Create a mask to filter out tokens with probability below epsilon threshold.
+                if epsilon is not None:
+                    mask = probs >= epsilon
+                # 3) Apply the mask to keep only tokens with probability >= epsilon.
+                probs[~mask] = 0.0
+                # 4) Renormalize the filtered probabilities so they sum to 1.
+                probs = probs / (probs.sum(dim=-1, keepdim=True) + 1e-9)
+                # 5) Sample from this filtered probability distribution.
+                idx_next = torch.multinomial(probs, num_samples=1)
+
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
 
