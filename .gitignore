@@ -1,0 +1,19 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.so
+
+# Conda installer
+Miniconda3-latest-Linux-x86_64.sh
+
+# Model checkpoints
+*.pt
+
+# Output files
+# *.txt
+
+# Jupyter checkpoints (if using)
+.ipynb_checkpoints/
+
+# System files
+.DS_Store

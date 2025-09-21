@@ -70,13 +70,16 @@ def apply_rotary_emb(
 
     dim_pair = torch.arange(0, head_dim, 2, device=device)  # even dimensions
     freq_tensor = 1.0 / (theta ** (dim_pair.float() / head_dim))
-
     positions = torch.arange(seqlen, device=device)
-    angles = [torch.einsum("n,d->nd", positions, freq_tensor)]
+    freqs = torch.outer(positions, freq_tensor).float()
+    freqs_cos = torch.cos(freqs)
+    freqs_sin = torch.sin(freqs)
 
-    # reshaping
-    cos = angles.cos()[:, None, None, :]
-    sin = angles.sin()[:, None, None, :]
+    # reshaping for broadcast
+    ndim = query_real.ndim
+    shape = [d if i==1 or i==ndim-1 else 1 for i,d in enumerate(query_real.shape)]
+    cos = freqs_cos.view(shape)
+    sin = freqs_sin.view(shape)
 
     # Then, combine these trigonometric values with the tensors query_real, query_imag,
     # key_real, and key_imag.

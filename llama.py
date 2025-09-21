@@ -43,7 +43,7 @@ class LayerNorm(torch.nn.Module):
             torch.Tensor: The normalized tensor.
         """
         # todo
-        print(f"    LayerNorm. x is of dimension {x.ndim}")
+        # print(f"    LayerNorm. x is of dimension {x.ndim}")
         mean = x.mean(dim=1, keepdim=True)
         var = x.var(dim=1, keepdim=True)
         return (x - mean) / torch.sqrt(var + self.eps)
@@ -353,10 +353,16 @@ class Llama(LlamaPreTrainedModel):
                 # 2) Create a mask to filter out tokens with probability below epsilon threshold.
                 if epsilon is not None:
                     mask = probs >= epsilon
-                # 3) Apply the mask to keep only tokens with probability >= epsilon.
-                probs[~mask] = 0.0
-                # 4) Renormalize the filtered probabilities so they sum to 1.
-                probs = probs / (probs.sum(dim=-1, keepdim=True) + 1e-9)
+                    if mask.sum() == 0:
+                        # print("Warning: all probabilities filtered out — using unfiltered probs.")
+                        continue
+                    else:
+                        # 3) Apply the mask to keep only tokens with probability >= epsilon.
+                        probs[~mask] = 0.0
+                        # 4) Renormalize the filtered probabilities so they sum to 1.
+                        probs = probs / probs.sum(dim=-1, keepdim=True)
+                # probs = probs / (probs.sum(dim=-1, keepdim=True)) # + 1e-4)
+                assert torch.allclose(probs.sum(dim=-1), torch.ones_like(probs.sum(dim=-1)), atol=1e-4)
                 # 5) Sample from this filtered probability distribution.
                 idx_next = torch.multinomial(probs, num_samples=1)
 
