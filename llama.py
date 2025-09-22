@@ -43,13 +43,16 @@ class LayerNorm(torch.nn.Module):
             torch.Tensor: The normalized tensor.
         """
         # todo
-        # print(f"    LayerNorm. x is of dimension {x.ndim}")
-        mean = x.mean(dim=1, keepdim=True)
-        var = x.var(dim=1, keepdim=True)
-        return (x - mean) / torch.sqrt(var + self.eps)
+        layernorm = torch.nn.LayerNorm(x.shape, eps=self.eps, bias=True)
+        x_norm = layernorm(x)
+        return x_norm
+        
+        # print(f"    LayerNorm. x is of dimensions {x.shape}")
+        mean = x.mean(dim=-1, keepdim=True)
+        var = x.var(dim=-1, keepdim=True, unbiased=False)
+        x_norm = (x - mean) / torch.sqrt(var + self.eps)
+        return x_norm
 
-        # layernorm = torch.LayerNorm(normalized_shape=1, bias=True)
-        # return layernorm(x)
         # raise NotImplementedError
 
     def forward(self, x):
@@ -95,6 +98,11 @@ class Attention(nn.Module):
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
         self.dropout = config.dropout
+        
+        # i added this! (seen in andrej karpathy's implementation)
+        mask = torch.full((1, 1, config.max_seq_len, config.max_seq_len), float("-inf"))
+        mask = torch.triu(mask, diagonal=1)
+        self.register_buffer("mask", mask)
 
     def compute_query_key_value_scores(
         self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor
@@ -110,13 +118,16 @@ class Attention(nn.Module):
         attention matrix before applying it to the value tensor.
         """
         # (bs, n_local_heads, seqlen, head_dim) x (bs, n_local_heads, head_dim, seqlen) = (bs, n_local_heads, seqlen, seqlen)
-        numerator = torch.matmul(query, key.transpose(-2, -1))  # matmul
+        numerator = torch.matmul(query, key.transpose(2, 3))  # matmul
         denominator = math.sqrt(self.head_dim)  # scale
         scores = numerator / denominator
 
         # saw this in https://github.com/karpathy/llama2.c/blob/350e04fe35433e6d2941dce5a1f53308f87058eb/model.py#L56
-        # seqlen = query.shape[2]
-        # scores = scores + self.mask[:, :, :seqlen, :seqlen]
+        
+        seqlen = query.shape[2]
+        if seqlen > self.max_seq_len:
+            print("seqlen > self.max_seq_len")
+        scores = scores + self.mask[:, :, :seqlen, :seqlen]
 
         # softmax over last dimension
         attention = F.softmax(scores, dim=-1).type_as(query)
@@ -330,6 +341,7 @@ class Llama(LlamaPreTrainedModel):
             # forward the model to get the logits for the index in the sequence
             logits, _ = self(idx_cond)
             logits = logits[:, -1, :]  # crop to just the final time step
+            
             # todo
             # raise NotImplementedError
 
@@ -354,17 +366,19 @@ class Llama(LlamaPreTrainedModel):
                 if epsilon is not None:
                     mask = probs >= epsilon
                     if mask.sum() == 0:
+                        idx_next = torch.multinomial(probs, num_samples=1)
                         # print("Warning: all probabilities filtered out — using unfiltered probs.")
-                        continue
                     else:
                         # 3) Apply the mask to keep only tokens with probability >= epsilon.
                         probs[~mask] = 0.0
                         # 4) Renormalize the filtered probabilities so they sum to 1.
                         probs = probs / probs.sum(dim=-1, keepdim=True)
-                # probs = probs / (probs.sum(dim=-1, keepdim=True)) # + 1e-4)
-                assert torch.allclose(probs.sum(dim=-1), torch.ones_like(probs.sum(dim=-1)), atol=1e-4)
-                # 5) Sample from this filtered probability distribution.
-                idx_next = torch.multinomial(probs, num_samples=1)
+                        # probs = probs / (probs.sum(dim=-1, keepdim=True)) # + 1e-4)
+                        assert torch.allclose(probs.sum(dim=-1), torch.ones_like(probs.sum(dim=-1)), atol=1e-4)
+                        # 5) Sample from this filtered probability distribution.
+                        idx_next = torch.multinomial(probs, num_samples=1)
+                else:
+                    idx_next = torch.multinomial(probs, num_samples=1)
 
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)

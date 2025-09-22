@@ -49,7 +49,6 @@ def apply_rotary_emb(
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: Tuple of modified query tensor and key tensor with rotary embeddings.
     """
-
     _, seqlen, _, _ = query.shape
     device = query.device
     # todo
@@ -76,10 +75,8 @@ def apply_rotary_emb(
     freqs_sin = torch.sin(freqs)
 
     # reshaping for broadcast
-    ndim = query_real.ndim
-    shape = [d if i==1 or i==ndim-1 else 1 for i,d in enumerate(query_real.shape)]
-    cos = freqs_cos.view(shape)
-    sin = freqs_sin.view(shape)
+    cos = reshape_for_broadcast(freqs_cos, query_real)
+    sin = reshape_for_broadcast(freqs_sin, query_real)
 
     # Then, combine these trigonometric values with the tensors query_real, query_imag,
     # key_real, and key_imag.
@@ -88,9 +85,9 @@ def apply_rotary_emb(
     # x'_imag = x_real * sin + x_imag * cos
 
     query_out_real = query_real * cos - query_imag * sin
-    query_out_imag = query_imag * sin + query_imag * cos
+    query_out_imag = query_real * sin + query_imag * cos
     key_out_real = key_real * cos - key_imag * sin
-    key_out_imag = key_imag * sin + key_imag * cos
+    key_out_imag = key_real * sin + key_imag * cos
 
     # Note: referenced https://github.com/karpathy/llama2.c/blob/master/model.py
     # raise NotImplementedError
@@ -101,5 +98,4 @@ def apply_rotary_emb(
     )
     key_out = torch.stack((key_out_real, key_out_imag), dim=-1).flatten(start_dim=-2)
 
-    # Return the rotary position embeddings for the query and key tensors
     return query_out, key_out
