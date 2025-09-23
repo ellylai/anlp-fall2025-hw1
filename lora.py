@@ -48,16 +48,14 @@ class LoRALayer(nn.Module):
             Output tensor of shape (batch, seq, out_features)
         """
         # todo
-        # then scale delt_W by a/r
-        x = self.original_layer(x)  # (batch, seq, in_features)
-        # given W_0, introduce new weights, A, B -> W_0 + BA
-        # after fine-tuning, use the weight matrix W = W_0 + delt_W
+        original_layer_x = self.original_layer(x)  # (batch, seq, in_features)
         A = self.lora_A  # (batch, rank, in_features)
         B = self.lora_B  # (batch, seq, rank)
         scale = self.scaling
-        delt_W = torch.matmul(B, A)  # (batch, seq, in_features)
-        W = x + scale * delt_W  # (batch, seq, out_features)
-        return W
+        down_projection = x @ A.T # (seq, rank)
+        up_projection = down_projection @ B.T
+        scaled_x = scale * up_projection
+        return original_layer_x + scaled_x
         # raise NotImplementedError
 
 
